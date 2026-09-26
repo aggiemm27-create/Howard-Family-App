@@ -85,6 +85,8 @@
   .chip-row { display: flex; gap: 6px; }
   .chip-row input { flex: 1; }
   .hint { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  label.check { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; font-size: 14px; font-weight: 500; color: var(--text); }
+  label.check input { width: auto; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
   @media (max-width: 600px) {
     .grid { grid-template-columns: 1fr; }
@@ -161,9 +163,17 @@
         </select>
       </div>
       <div>
+        <label for="f_sex">Sex</label>
+        <select id="f_sex">
+          <option value="">Not set</option>
+          <option value="Female">Female</option>
+          <option value="Male">Male</option>
+        </select>
+      </div>
+      <div class="full">
         <label for="f_branch">Branch</label>
         <input id="f_branch" list="branchList" placeholder="e.g. 3 - Louis Toomer">
-        <div class="hint">Pick an existing branch from the suggestions so they group together.</div>
+        <div class="hint">Pick an existing branch from the suggestions. If left blank, it's taken from the person's parent or spouse.</div>
       </div>
 
       <div class="section-title">Family</div>
@@ -177,11 +187,17 @@
         <div class="chips"></div>
         <div class="chip-row"><input list="peopleList" placeholder="Type a name, then press Enter"><button type="button" class="secondary">Add</button></div>
       </div>
+      <div class="full hidden" id="marriedWrap">
+        <label for="f_marriedName">Married name</label>
+        <input id="f_marriedName">
+        <label class="check"><input type="checkbox" id="f_keptName"> Kept her own name (no married name)</label>
+        <div class="hint">Filled in automatically from her most recent spouse. Only type here if the automatic name isn't right.</div>
+      </div>
       <div class="full" data-chips="children">
         <label>Children</label>
         <div class="chips"></div>
         <div class="chip-row"><input list="peopleList" placeholder="Type a name, then press Enter"><button type="button" class="secondary">Add</button></div>
-        <div class="hint">Suggestions appear as you type if the person is already in the directory. Pick one to avoid duplicates.</div>
+        <div class="hint">Suggestions appear as you type if the person is already in the directory. Pick one to avoid duplicates. Anyone not in the directory yet is added automatically when you save.</div>
       </div>
 
       <div class="section-title">Location and contact (optional)</div>
@@ -207,9 +223,10 @@
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwFDh5cJdlU79zz2pO9UET_uGehzggcAfR_UY6cWa0nWXsKMf4v5sKmTU_FFuip3Tsb/exec';
 // ========================================================================
 
-const FIELDS = ['fullName', 'otherNames', 'birthYear', 'status', 'branch', 'city', 'state', 'email', 'phone'];
+const FIELDS = ['fullName', 'otherNames', 'birthYear', 'status', 'sex', 'branch', 'city', 'state', 'email', 'phone'];
 const LISTS = ['parents', 'spouses', 'children'];
 const NO_BRANCH = '__none__';
+const KEPT = 'Kept own name';
 let people = [];
 let passcode = '';
 let userName = '';
@@ -259,6 +276,41 @@ function showStatus(text, type = 'info') {
 }
 
 function label(p) { return p.fullName + (p.birthYear ? ' (' + p.birthYear + ')' : ''); }
+
+// ----- Names, matching and married names -----
+const stripYear = (n) => String(n || '').replace(/\s*\([^)]*\)\s*$/, '').trim();
+const SUFFIX = /,?\s+(Sr\.?|Jr\.?|II|III|IV)\s*$/i;
+function firstOf(name) { return stripYear(name).split(/\s+/)[0] || ''; }
+function surnameOf(name) { const w = stripYear(name).replace(SUFFIX, '').trim().split(/\s+/); return w[w.length - 1] || ''; }
+
+// Finds a person from a typed name or a suggestion like "Name (1980)".
+function makeFinder() {
+  const byKey = new Map();
+  people.forEach((p) => { byKey.set(norm(p.fullName), p); byKey.set(norm(label(p)), p); });
+  return (n) => byKey.get(norm(n)) || byKey.get(norm(stripYear(n)));
+}
+
+function oppositeOf(sex) { return sex === 'Female' ? 'Male' : sex === 'Male' ? 'Female' : ''; }
+
+// Sex as recorded, or assumed from a spouse whose sex is known.
+function sexOf(p, find) {
+  if (p.sex) return p.sex;
+  for (const s of split(p.spouses)) { const x = find(s); if (x && x.sex) return oppositeOf(x.sex); }
+  return '';
+}
+
+function autoMarried(fullName, spouses) {
+  return spouses.length ? firstOf(fullName) + ' ' + surnameOf(spouses[spouses.length - 1]) : '';
+}
+
+// Married name to show on a card, or '' when there's nothing new to show.
+function marriedNameFor(p, find) {
+  if (sexOf(p, find) !== 'Female' || p.marriedName === KEPT) return '';
+  const v = p.marriedName || autoMarried(p.fullName, split(p.spouses));
+  if (!v) return '';
+  if (norm(v) === norm(p.fullName) || norm(v) === norm(firstOf(p.fullName) + ' ' + surnameOf(p.fullName))) return '';
+  return v;
+}
 
 // ----- Sign in -----
 async function unlock() {
@@ -339,9 +391,7 @@ function goHome() { history.pushState('', document.title, location.pathname + lo
 
 // ----- Generations (worked out from parent / child / spouse links) -----
 function buildRelations() {
-  const byKey = new Map();
-  people.forEach((p) => { byKey.set(norm(p.fullName), p); byKey.set(norm(label(p)), p); });
-  const find = (n) => byKey.get(norm(n)) || byKey.get(norm(String(n).replace(/\s*\([^)]*\)\s*$/, '')));
+  const find = makeFinder();
   const rel = new Map();
   people.forEach((p) => rel.set(p.id, { parents: new Set(), children: new Set(), spouses: new Set() }));
   people.forEach((p) => {
@@ -441,12 +491,14 @@ function genLabel(r, isFounders, key) {
   if (r === 1) return 'Children';
   if (r === 2) return 'Grandchildren';
   if (r === 3) return 'Great-grandchildren';
+  if (r === 4) return 'Great-great-grandchildren';
   return (r - 2) + 'x great-grandchildren';
 }
 
 // ----- Rendering -----
-function personCard(p, showBranch) {
+function personCard(p, showBranch, find) {
   const loc = [p.city, p.state].filter(Boolean).join(', ');
+  const married = marriedNameFor(p, find);
   const rel = (title, val) => val ? '<div><b>' + title + ':</b> ' + esc(split(val).join(', ')) + '</div>' : '';
   const contact = canSeeContacts() ? [p.email, p.phone].filter(Boolean).map(esc).join(' · ') : '';
   return '<div class="person">'
@@ -455,7 +507,7 @@ function personCard(p, showBranch) {
     + (p.status && p.status !== 'Living' ? '<span class="tag">' + esc(p.status === 'Unknown' ? 'Status unknown' : p.status) + '</span>' : '')
     + (showBranch && p.branch ? '<span class="tag branch">' + esc(p.branch) + '</span>' : '')
     + '</h3>'
-    + '<div class="sub">' + [p.otherNames ? 'aka ' + esc(p.otherNames) : '', p.birthYear ? 'Born ' + esc(p.birthYear) : '', esc(loc)].filter(Boolean).join(' · ') + '</div>'
+    + '<div class="sub">' + [married ? 'Married name ' + esc(married) : '', p.otherNames ? 'aka ' + esc(p.otherNames) : '', p.birthYear ? 'Born ' + esc(p.birthYear) : '', esc(loc)].filter(Boolean).join(' · ') + '</div>'
     + '</div><div style="white-space:nowrap">'
     + '<button class="link" data-edit="' + esc(p.id) + '">Edit</button>'
     + (role === 'admin' ? '<button class="danger" data-del="' + esc(p.id) + '">Delete</button>' : '')
@@ -470,16 +522,17 @@ function render() {
   const q = norm($('searchInput').value);
   const content = $('content');
   const sortedAll = people.slice().sort((a, b) => a.fullName.localeCompare(b.fullName));
+  const find = makeFinder();
 
   $('peopleList').innerHTML = sortedAll.map((p) => '<option value="' + esc(label(p)) + '">').join('');
   $('branchList').innerHTML = groups.filter((g) => g.key !== NO_BRANCH).map((g) => '<option value="' + esc(g.name) + '">').join('');
 
   // Search: whole family, alphabetical
   if (q) {
-    const searchText = (p) => norm([p.fullName, p.otherNames, p.birthYear, p.status, p.branch, p.parents, p.spouses, p.children, p.city, p.state, p.email, p.phone].join(' '));
+    const searchText = (p) => norm([p.fullName, marriedNameFor(p, find), p.otherNames, p.birthYear, p.status, p.branch, p.parents, p.spouses, p.children, p.city, p.state, p.email, p.phone].join(' '));
     const hits = sortedAll.filter((p) => searchText(p).includes(q));
     content.innerHTML = '<div class="count">' + hits.length + ' ' + (hits.length === 1 ? 'match' : 'matches') + ' in the whole family</div>'
-      + '<div class="list">' + (hits.length ? hits.map((p) => personCard(p, true)).join('') : '<div class="card" style="color:var(--muted)">No matches.</div>') + '</div>';
+      + '<div class="list">' + (hits.length ? hits.map((p) => personCard(p, true, find)).join('') : '<div class="card" style="color:var(--muted)">No matches.</div>') + '</div>';
     return;
   }
 
@@ -524,7 +577,7 @@ function render() {
       html += '<div class="gen-title">' + esc(genLabel(r, isFounders, group.key)) + '</div><div class="list">';
       lastGen = r;
     } else if (!multiGen && lastGen === null) { html += '<div class="list">'; lastGen = r; }
-    html += personCard(p, false);
+    html += personCard(p, false, find);
   });
   html += '</div></div>';
   content.innerHTML = html;
@@ -537,6 +590,7 @@ function drawChips(key) {
   const box = document.querySelector('[data-chips="' + key + '"] .chips');
   box.innerHTML = chipData[key].map((n, i) =>
     '<span class="chip">' + esc(n) + '<button type="button" data-rm="' + key + ':' + i + '" aria-label="Remove">×</button></span>').join('');
+  if (key === 'spouses') updateMarried();
 }
 
 function addChip(key) {
@@ -574,6 +628,9 @@ function openForm(p) {
     document.querySelector('[data-chips="' + k + '"] input').value = '';
     drawChips(k);
   });
+  $('f_keptName').checked = !!p && p.marriedName === KEPT;
+  $('f_marriedName').value = p && p.marriedName !== KEPT ? (p.marriedName || '') : '';
+  updateMarried();
   $('privateHint').classList.toggle('hidden', canSeeContacts());
   $('formMsg').classList.add('hidden');
   $('dupWarn').classList.add('hidden');
@@ -582,6 +639,44 @@ function openForm(p) {
 }
 
 function closeForm() { $('overlay').classList.add('hidden'); }
+
+// Sex chosen in the form, or assumed from a spouse whose sex is known.
+function formSex() {
+  if ($('f_sex').value) return $('f_sex').value;
+  const find = makeFinder();
+  for (const s of chipData.spouses) { const x = find(s); if (x && x.sex) return oppositeOf(x.sex); }
+  return '';
+}
+
+// Shows the married-name box for women with a spouse, with the automatic name as the placeholder.
+function updateMarried() {
+  const show = formSex() === 'Female' && chipData.spouses.length > 0;
+  $('marriedWrap').classList.toggle('hidden', !show);
+  const auto = autoMarried($('f_fullName').value.trim() || 'Her', chipData.spouses);
+  $('f_marriedName').placeholder = auto ? 'Automatic: ' + auto : '';
+  $('f_marriedName').disabled = $('f_keptName').checked;
+}
+
+// People named in Parents / Spouse / Children who aren't in the directory yet get their own entries.
+function buildExtras(person, find) {
+  const extras = [];
+  const seen = new Set([norm(person.fullName)]);
+  const parse = (n) => { const m = String(n).match(/^(.*?)\s*\(([^)]*)\)\s*$/); return m ? { name: m[1].trim(), year: m[2].trim() } : { name: String(n).trim(), year: '' }; };
+  const spouses = split(person.spouses), kids = split(person.children), parents = split(person.parents);
+  const oneSpouse = spouses.length === 1 ? parse(spouses[0]).name : '';
+  const add = (raw, extra) => {
+    if (find(raw)) return;
+    const c = parse(raw);
+    if (!c.name || seen.has(norm(c.name))) return;
+    seen.add(norm(c.name));
+    extras.push(Object.assign({ fullName: c.name, birthYear: c.year, branch: person.branch, status: 'Living', sex: '', marriedName: '',
+      otherNames: '', parents: '', spouses: '', children: '', notes: '', addedBy: person.addedBy }, extra));
+  };
+  kids.forEach((k) => add(k, { parents: [person.fullName].concat(oneSpouse ? [oneSpouse] : []).join('; ') }));
+  spouses.forEach((s) => add(s, { spouses: person.fullName, sex: oppositeOf(person.sex), children: spouses.length === 1 ? kids.join('; ') : '' }));
+  parents.forEach((pa) => add(pa, { children: person.fullName, status: 'Unknown' }));
+  return extras;
+}
 
 function checkDup() {
   const name = norm($('f_fullName').value);
@@ -601,13 +696,21 @@ async function save() {
   // Notes are no longer shown in the app; keep whatever is already on file.
   const old = editingId && people.find((p) => p.id === editingId);
   person.notes = old ? (old.notes || '') : '';
+  const find = makeFinder();
+  person.sex = formSex();
+  person.marriedName = person.sex === 'Female' && chipData.spouses.length
+    ? ($('f_keptName').checked ? KEPT : $('f_marriedName').value.trim()) : '';
+  if (!person.branch) {
+    const rel = split(person.parents).concat(split(person.spouses)).map(find).find((x) => x && x.branch);
+    if (rel) person.branch = rel.branch;
+  }
   const msg = $('formMsg');
   if (!person.fullName) { msg.textContent = 'Please enter a name.'; msg.classList.remove('hidden'); return; }
 
   $('saveBtn').disabled = true;
   $('saveBtn').textContent = 'Saving...';
   try {
-    await api('save', { person });
+    await api('save', { person, extras: buildExtras(person, find) });
     closeForm();
     showStatus('Saved ' + person.fullName + '.');
     await loadPeople();
@@ -638,6 +741,7 @@ async function removePerson(id) {
 function exportCsv() {
   if (role !== 'admin') return;
   const cols = [['fullName', 'Full name'], ['otherNames', 'Other names'], ['birthYear', 'Birth year'], ['status', 'Status'],
+    ['sex', 'Sex'], ['marriedName', 'Married name'],
     ['branch', 'Branch'], ['parents', 'Parents'], ['spouses', 'Spouses'], ['children', 'Children'], ['city', 'City'], ['state', 'State']]
     .concat(canSeeContacts() ? [['email', 'Email'], ['phone', 'Phone']] : [])
     .concat([['notes', 'Notes'], ['addedBy', 'Added by'], ['updatedAt', 'Last updated'], ['id', 'ID']]);
@@ -662,7 +766,9 @@ $('exportBtn').addEventListener('click', exportCsv);
 $('searchInput').addEventListener('input', render);
 $('cancelBtn').addEventListener('click', closeForm);
 $('saveBtn').addEventListener('click', save);
-$('f_fullName').addEventListener('input', checkDup);
+$('f_fullName').addEventListener('input', () => { checkDup(); updateMarried(); });
+$('f_sex').addEventListener('change', updateMarried);
+$('f_keptName').addEventListener('change', updateMarried);
 $('content').addEventListener('click', (e) => {
   const card = e.target.closest('[data-branch]');
   if (card) { openBranch(card.getAttribute('data-branch')); return; }

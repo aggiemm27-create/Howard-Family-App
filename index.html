@@ -46,7 +46,9 @@
   .branch-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(47,93,80,.12); }
   .branch-card .num { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); }
   .branch-card .name { font-size: 19px; font-weight: 600; line-height: 1.25; }
-  .branch-card .meta { margin-top: auto; font-size: 14px; color: var(--muted); }
+  .branch-card .desc { font-size: 13px; color: var(--muted); line-height: 1.35; }
+  .branch-card .meta { margin-top: auto; padding-top: 6px; font-size: 14px; color: var(--muted); }
+  .branch-desc { margin: 0 0 4px; color: var(--text); font-size: 15px; }
   .branch-card.muted .name { color: var(--muted); }
 
   /* Branch view */
@@ -125,7 +127,7 @@
     <div class="toolbar">
       <input id="searchInput" type="search" placeholder="Search the whole family: names, parents, children, cities...">
       <button id="addBtn">+ Add person</button>
-      <button id="exportBtn" class="secondary">Download spreadsheet</button>
+      <button id="exportBtn" class="secondary hidden">Download spreadsheet</button>
       <button id="refreshBtn" class="secondary">Refresh</button>
     </div>
     <div id="content"></div>
@@ -188,7 +190,6 @@
       <div><label for="f_email">Email</label><input id="f_email" type="email"></div>
       <div><label for="f_phone">Phone</label><input id="f_phone" type="tel"></div>
       <div id="privateHint" class="full hint hidden">Email and phone are kept private. Only the reunion organizers can see them after you save. On an existing person, leave these blank to keep whatever is already on file.</div>
-      <div class="full"><label for="f_notes">Notes</label><textarea id="f_notes" placeholder="Anything that helps place this person in the family"></textarea></div>
     </div>
     <div id="formMsg" class="status error hidden" style="margin-top:12px"></div>
     <div class="actions">
@@ -206,7 +207,7 @@
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwFDh5cJdlU79zz2pO9UET_uGehzggcAfR_UY6cWa0nWXsKMf4v5sKmTU_FFuip3Tsb/exec';
 // ========================================================================
 
-const FIELDS = ['fullName', 'otherNames', 'birthYear', 'status', 'branch', 'city', 'state', 'email', 'phone', 'notes'];
+const FIELDS = ['fullName', 'otherNames', 'birthYear', 'status', 'branch', 'city', 'state', 'email', 'phone'];
 const LISTS = ['parents', 'spouses', 'children'];
 const NO_BRANCH = '__none__';
 let people = [];
@@ -247,6 +248,7 @@ async function loadPeople() {
   role = res.role || 'family';
   const roleName = { admin: 'admin', organizer: 'organizer', family: 'family member' }[role];
   $('whoLine').textContent = 'Signed in as ' + userName + ' (' + roleName + ')';
+  $('exportBtn').classList.toggle('hidden', role !== 'admin');
 }
 
 function showStatus(text, type = 'info') {
@@ -407,6 +409,31 @@ function orderBranch(members, rel, depth) {
   return { minD, list: order.slice().sort((a, b) => depth.get(a.id) - depth.get(b.id) || pos.get(a.id) - pos.get(b.id)) };
 }
 
+// "Milton William Howard, Sr." -> "Milton Sr."; "Eloise Gertrude Poyas Howard" -> "Eloise"
+function shortName(p) {
+  const m = p.fullName.match(/,?\s+(Sr\.?|Jr\.?|II|III|IV)\s*$/i);
+  return p.fullName.trim().split(/\s+/)[0].replace(/,$/, '') + (m ? ' ' + m[1] : '');
+}
+
+// Describes what a branch represents, using the family links.
+function branchDescription(group, rel, depth, short) {
+  if (group.key === NO_BRANCH) return 'People who still need a branch assigned.';
+  const members = group.members;
+  const minD = Math.min(...members.map((p) => depth.get(p.id)));
+  const top = members.filter((p) => depth.get(p.id) === minD).sort(byBirth);
+  if (/^\s*0\s*[-–]/.test(group.name)) {
+    const kids = new Set();
+    top.forEach((p) => rel.get(p.id).children.forEach((c) => kids.add(c.id)));
+    return kids.size ? 'Parents of the ' + kids.size + ' branch heads' + (short ? '' : ', the children who started each family branch') + '.' : 'The founders of the family.';
+  }
+  const head = top.find((p) => rel.get(p.id).parents.size) || top[0];
+  if (!head) return '';
+  const parents = [...rel.get(head.id).parents].sort(byBirth);
+  const nameOf = (p) => short ? shortName(p) : p.fullName;
+  return 'The family of ' + head.fullName
+    + (parents.length ? ', child of ' + parents.map(nameOf).join(' & ') : '') + '.';
+}
+
 function genLabel(r, isFounders, key) {
   if (key === NO_BRANCH) return 'Generation ' + (r + 1);
   if (isFounders) return r === 0 ? 'Founders' : 'Generation ' + (r + 1);
@@ -435,7 +462,6 @@ function personCard(p, showBranch) {
     + '</div></div>'
     + '<div class="rels">' + rel('Parents', p.parents) + rel('Spouse', p.spouses) + rel('Children', p.children)
     + (contact ? '<div><b>Contact:</b> ' + contact + '</div>' : '') + '</div>'
-    + (p.notes ? '<div class="sub" style="margin-top:6px">' + esc(p.notes) + '</div>' : '')
     + '</div>';
 }
 
@@ -450,7 +476,8 @@ function render() {
 
   // Search: whole family, alphabetical
   if (q) {
-    const hits = sortedAll.filter((p) => norm(Object.values(p).join(' ')).includes(q));
+    const searchText = (p) => norm([p.fullName, p.otherNames, p.birthYear, p.status, p.branch, p.parents, p.spouses, p.children, p.city, p.state, p.email, p.phone].join(' '));
+    const hits = sortedAll.filter((p) => searchText(p).includes(q));
     content.innerHTML = '<div class="count">' + hits.length + ' ' + (hits.length === 1 ? 'match' : 'matches') + ' in the whole family</div>'
       + '<div class="list">' + (hits.length ? hits.map((p) => personCard(p, true)).join('') : '<div class="card" style="color:var(--muted)">No matches.</div>') + '</div>';
     return;
@@ -458,6 +485,8 @@ function render() {
 
   const key = currentBranch();
   const group = key && groups.find((g) => g.key === key);
+  const rel = buildRelations();
+  const depth = computeDepths(rel);
 
   // Home: branch cards
   if (!group) {
@@ -469,6 +498,7 @@ function render() {
         return '<button class="branch-card' + (g.key === NO_BRANCH ? ' muted' : '') + '" data-branch="' + esc(g.key) + '">'
           + '<span class="num">' + esc(parts.num) + '</span>'
           + '<span class="name">' + esc(parts.title) + '</span>'
+          + '<span class="desc">' + esc(branchDescription(g, rel, depth, true)) + '</span>'
           + '<span class="meta">' + g.members.length + ' ' + (g.members.length === 1 ? 'person' : 'people')
           + (deceased ? ' · ' + deceased + ' deceased' : '') + '</span></button>';
       }).join('') + '</div>'
@@ -477,13 +507,12 @@ function render() {
   }
 
   // Branch view: by generation
-  const rel = buildRelations();
-  const depth = computeDepths(rel);
   const { minD, list } = orderBranch(group.members, rel, depth);
   const parts = branchParts(group.name, group.key);
   const isFounders = /^\s*0\s*[-–]/.test(group.name);
   let html = '<button class="link back" id="backBtn">← All branches</button>'
     + '<h2 class="branch-title">' + esc(parts.title) + '</h2>'
+    + '<p class="branch-desc">' + esc(branchDescription(group, rel, depth, false)) + '</p>'
     + '<div class="count">' + esc(parts.num) + ' · ' + group.members.length + ' ' + (group.members.length === 1 ? 'person' : 'people') + '</div>';
   let lastGen = null;
   const multiGen = new Set(list.map((p) => depth.get(p.id))).size > 1;
@@ -569,6 +598,9 @@ async function save() {
   const person = { id: editingId || '', addedBy: userName };
   FIELDS.forEach((f) => { person[f] = $('f_' + f).value.trim(); });
   LISTS.forEach((k) => { person[k] = chipData[k].join('; '); });
+  // Notes are no longer shown in the app; keep whatever is already on file.
+  const old = editingId && people.find((p) => p.id === editingId);
+  person.notes = old ? (old.notes || '') : '';
   const msg = $('formMsg');
   if (!person.fullName) { msg.textContent = 'Please enter a name.'; msg.classList.remove('hidden'); return; }
 
@@ -604,6 +636,7 @@ async function removePerson(id) {
 
 // ----- Export -----
 function exportCsv() {
+  if (role !== 'admin') return;
   const cols = [['fullName', 'Full name'], ['otherNames', 'Other names'], ['birthYear', 'Birth year'], ['status', 'Status'],
     ['branch', 'Branch'], ['parents', 'Parents'], ['spouses', 'Spouses'], ['children', 'Children'], ['city', 'City'], ['state', 'State']]
     .concat(canSeeContacts() ? [['email', 'Email'], ['phone', 'Phone']] : [])

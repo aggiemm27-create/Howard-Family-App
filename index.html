@@ -34,11 +34,28 @@
   .lock .field { margin-bottom: 12px; }
   .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
   .toolbar #searchInput { flex: 1 1 220px; }
-  .toolbar #branchFilter { flex: 0 1 240px; }
-  .count { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
+  .count { color: var(--muted); font-size: 14px; margin-bottom: 10px; }
   .status { padding: 8px 12px; border-radius: 7px; margin-bottom: 12px; font-size: 14px; }
   .status.info { background: var(--accent-soft); color: var(--accent); }
   .status.error { background: #f6e1dc; color: var(--danger); }
+
+  /* Branch cards */
+  .branches { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+  .branch-card { text-align: left; background: var(--card); color: var(--text); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 4px; min-height: 110px; }
+  .branch-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(47,93,80,.12); }
+  .branch-card .num { font-size: 12px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); }
+  .branch-card .name { font-size: 19px; font-weight: 600; line-height: 1.25; }
+  .branch-card .meta { margin-top: auto; font-size: 14px; color: var(--muted); }
+  .branch-card.muted .name { color: var(--muted); }
+
+  /* Branch view */
+  .back { margin: 0 0 6px -8px; }
+  .branch-title { margin: 0 0 4px; font-size: 24px; }
+  .gen-title { margin: 20px 0 8px; font-size: 14px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--accent); border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+  .gen-title:first-of-type { margin-top: 8px; }
+
   .list { display: grid; gap: 10px; }
   .person { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
   .person .top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
@@ -50,6 +67,7 @@
   .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; margin-left: 6px;
     background: var(--chip); color: var(--muted); vertical-align: middle; font-weight: 500; }
   .tag.branch { background: var(--accent-soft); color: var(--accent); }
+
   .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: flex-start;
     justify-content: center; overflow-y: auto; padding: 24px 12px; z-index: 10; }
   .modal { background: var(--card); border-radius: 12px; width: 100%; max-width: 720px; padding: 20px; }
@@ -69,7 +87,9 @@
   @media (max-width: 600px) {
     .grid { grid-template-columns: 1fr; }
     .modal { padding: 16px; }
-    .toolbar #branchFilter { flex: 1 1 100%; }
+    .branches { grid-template-columns: 1fr 1fr; gap: 8px; }
+    .branch-card { min-height: 96px; padding: 12px; }
+    .branch-card .name { font-size: 16px; }
   }
 </style>
 </head>
@@ -103,14 +123,12 @@
   <section id="appView" class="hidden">
     <div id="statusBar" class="status hidden"></div>
     <div class="toolbar">
-      <input id="searchInput" type="search" placeholder="Search names, parents, children, cities...">
-      <select id="branchFilter" aria-label="Filter by branch"></select>
+      <input id="searchInput" type="search" placeholder="Search the whole family: names, parents, children, cities...">
       <button id="addBtn">+ Add person</button>
       <button id="exportBtn" class="secondary">Download spreadsheet</button>
       <button id="refreshBtn" class="secondary">Refresh</button>
     </div>
-    <div id="countLine" class="count"></div>
-    <div id="list" class="list"></div>
+    <div id="content"></div>
   </section>
 </main>
 
@@ -142,7 +160,7 @@
       </div>
       <div>
         <label for="f_branch">Branch</label>
-        <input id="f_branch" list="branchList" placeholder="e.g. Aunt Ruth's line">
+        <input id="f_branch" list="branchList" placeholder="e.g. 3 - Louis Toomer">
         <div class="hint">Pick an existing branch from the suggestions so they group together.</div>
       </div>
 
@@ -201,6 +219,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const split = (s) => String(s || '').split(';').map((x) => x.trim()).filter(Boolean);
 const canSeeContacts = () => role === 'admin' || role === 'organizer';
+const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
 const store = {
   get(k, session) { try { return (session ? sessionStorage : localStorage).getItem(k) || ''; } catch (e) { return ''; } },
   set(k, v, session) { try { (session ? sessionStorage : localStorage).setItem(k, v); } catch (e) {} },
@@ -243,11 +262,6 @@ function label(p) { return p.fullName + (p.birthYear ? ' (' + p.birthYear + ')' 
 async function unlock() {
   const msg = $('lockMsg');
   msg.classList.add('hidden');
-  if (SCRIPT_URL.startsWith('PASTE')) {
-    msg.textContent = 'The app is not connected yet: the Google script URL has not been added to this page.';
-    msg.classList.remove('hidden');
-    return;
-  }
   userName = $('nameInput').value.trim();
   passcode = $('passInput').value;
   if (!userName || !passcode) {
@@ -287,67 +301,204 @@ function handleError(e) {
   showStatus('Error: ' + e.message, 'error');
 }
 
-// ----- Branch filter -----
-function branchKey(b) { return String(b || '').trim().toLowerCase(); }
+// ----- Branches -----
+function branchKey(b) { return norm(b); }
 
-function renderBranchFilter() {
-  const sel = $('branchFilter');
-  const current = sel.value;
+function branchGroups() {
   const groups = {};
-  let none = 0;
   people.forEach((p) => {
-    const k = branchKey(p.branch);
-    if (!k) { none++; return; }
-    if (!groups[k]) groups[k] = { name: p.branch.trim(), count: 0 };
-    groups[k].count++;
+    const k = branchKey(p.branch) || NO_BRANCH;
+    if (!groups[k]) groups[k] = { key: k, name: k === NO_BRANCH ? 'No branch yet' : p.branch.trim(), members: [] };
+    groups[k].members.push(p);
   });
-  const list = Object.keys(groups).map((k) => ({ key: k, name: groups[k].name, count: groups[k].count }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-  sel.innerHTML = '<option value="">All branches (' + people.length + ')</option>'
-    + list.map((g) => '<option value="' + esc(g.key) + '">' + esc(g.name) + ' (' + g.count + ')</option>').join('')
-    + (none ? '<option value="' + NO_BRANCH + '">No branch yet (' + none + ')</option>' : '');
-  sel.value = [...sel.options].some((o) => o.value === current) ? current : '';
-  $('branchList').innerHTML = list.map((g) => '<option value="' + esc(g.name) + '">').join('');
+  return Object.values(groups).sort((a, b) => {
+    if (a.key === NO_BRANCH) return 1;
+    if (b.key === NO_BRANCH) return -1;
+    return a.name.localeCompare(b.name, undefined, { numeric: true });
+  });
 }
 
-// ----- List -----
-function render() {
-  renderBranchFilter();
-  const q = $('searchInput').value.trim().toLowerCase();
-  const bf = $('branchFilter').value;
-  const sorted = people.slice().sort((a, b) => a.fullName.localeCompare(b.fullName));
-  const shown = sorted.filter((p) => {
-    if (bf === NO_BRANCH && branchKey(p.branch)) return false;
-    if (bf && bf !== NO_BRANCH && branchKey(p.branch) !== bf) return false;
-    return !q || Object.values(p).join(' ').toLowerCase().includes(q);
+// "3 - Louis Toomer" -> { num: 'Branch 3', title: 'Louis Toomer' }
+function branchParts(name, key) {
+  if (key === NO_BRANCH) return { num: 'Needs sorting', title: 'No branch yet' };
+  const m = String(name).match(/^\s*(\d+)\s*[-–]\s*(.+)$/);
+  if (!m) return { num: 'Branch', title: name };
+  if (m[1] === '0') return { num: 'Where it began', title: m[2] };
+  return { num: 'Branch ' + m[1], title: m[2] };
+}
+
+function currentBranch() {
+  const m = location.hash.match(/^#branch=(.+)$/);
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+function openBranch(key) { location.hash = 'branch=' + encodeURIComponent(key); }
+function goHome() { history.pushState('', document.title, location.pathname + location.search); render(); }
+
+// ----- Generations (worked out from parent / child / spouse links) -----
+function buildRelations() {
+  const byKey = new Map();
+  people.forEach((p) => { byKey.set(norm(p.fullName), p); byKey.set(norm(label(p)), p); });
+  const find = (n) => byKey.get(norm(n)) || byKey.get(norm(String(n).replace(/\s*\([^)]*\)\s*$/, '')));
+  const rel = new Map();
+  people.forEach((p) => rel.set(p.id, { parents: new Set(), children: new Set(), spouses: new Set() }));
+  people.forEach((p) => {
+    const r = rel.get(p.id);
+    split(p.parents).forEach((n) => { const x = find(n); if (x && x.id !== p.id) { r.parents.add(x); rel.get(x.id).children.add(p); } });
+    split(p.children).forEach((n) => { const x = find(n); if (x && x.id !== p.id) { r.children.add(x); rel.get(x.id).parents.add(p); } });
+    split(p.spouses).forEach((n) => { const x = find(n); if (x && x.id !== p.id) { r.spouses.add(x); rel.get(x.id).spouses.add(p); } });
   });
+  return rel;
+}
 
-  $('countLine').textContent = people.length + ' ' + (people.length === 1 ? 'person' : 'people') + ' in the directory'
-    + (q || bf ? ' · ' + shown.length + ' shown' : '');
+function computeDepths(rel) {
+  const depth = new Map();
+  const visiting = new Set();
+  function d(p) {
+    if (depth.has(p.id)) return depth.get(p.id);
+    if (visiting.has(p.id)) return 0;
+    visiting.add(p.id);
+    const ps = [...rel.get(p.id).parents];
+    const v = ps.length ? 1 + Math.max(...ps.map(d)) : 0;
+    visiting.delete(p.id);
+    depth.set(p.id, v);
+    return v;
+  }
+  people.forEach(d);
+  // People who married in have no parents listed: place them with their spouse, or just above their children.
+  people.forEach((p) => {
+    const r = rel.get(p.id);
+    if (r.parents.size) return;
+    const blood = [...r.spouses].filter((s) => rel.get(s.id).parents.size);
+    if (blood.length) depth.set(p.id, Math.max(...blood.map((s) => depth.get(s.id))));
+    else if (r.children.size) depth.set(p.id, Math.max(0, Math.min(...[...r.children].map((c) => depth.get(c.id))) - 1));
+  });
+  return depth;
+}
 
-  const isAdmin = role === 'admin';
-  $('list').innerHTML = shown.length ? shown.map((p) => {
-    const loc = [p.city, p.state].filter(Boolean).join(', ');
-    const rel = (title, val) => val ? '<div><b>' + title + ':</b> ' + esc(split(val).join(', ')) + '</div>' : '';
-    const contact = canSeeContacts() ? [p.email, p.phone].filter(Boolean).map(esc).join(' · ') : '';
-    return '<div class="person">'
-      + '<div class="top"><div>'
-      + '<h3>' + esc(p.fullName)
-      + (p.status && p.status !== 'Living' ? '<span class="tag">' + esc(p.status === 'Unknown' ? 'Status unknown' : p.status) + '</span>' : '')
-      + (p.branch ? '<span class="tag branch">' + esc(p.branch) + '</span>' : '')
-      + '</h3>'
-      + '<div class="sub">' + [p.otherNames ? 'aka ' + esc(p.otherNames) : '', p.birthYear ? 'Born ' + esc(p.birthYear) : '', esc(loc)].filter(Boolean).join(' · ') + '</div>'
-      + '</div><div style="white-space:nowrap">'
-      + '<button class="link" data-edit="' + esc(p.id) + '">Edit</button>'
-      + (isAdmin ? '<button class="danger" data-del="' + esc(p.id) + '">Delete</button>' : '')
-      + '</div></div>'
-      + '<div class="rels">' + rel('Parents', p.parents) + rel('Spouse', p.spouses) + rel('Children', p.children)
-      + (contact ? '<div><b>Contact:</b> ' + contact + '</div>' : '') + '</div>'
-      + (p.notes ? '<div class="sub" style="margin-top:6px">' + esc(p.notes) + '</div>' : '')
-      + '</div>';
-  }).join('') : '<div class="card" style="color:var(--muted)">' + (q || bf ? 'No matches.' : 'No one added yet. Click "+ Add person" to start.') + '</div>';
+function byBirth(a, b) {
+  const ya = parseInt(String(a.birthYear).match(/\d{4}/) || '9999', 10);
+  const yb = parseInt(String(b.birthYear).match(/\d{4}/) || '9999', 10);
+  return ya - yb || a.fullName.localeCompare(b.fullName);
+}
 
-  $('peopleList').innerHTML = sorted.map((p) => '<option value="' + esc(label(p)) + '">').join('');
+// Orders a branch like a family tree: each person, then their spouse(s), then their children, and so on.
+function orderBranch(members, rel, depth) {
+  const inBranch = new Set(members.map((p) => p.id));
+  const seen = new Set();
+  const order = [];
+  function visit(p) {
+    if (seen.has(p.id)) return;
+    seen.add(p.id);
+    order.push(p);
+    [...rel.get(p.id).spouses].filter((s) => inBranch.has(s.id)).forEach((s) => {
+      if (!seen.has(s.id)) { seen.add(s.id); order.push(s); }
+    });
+    const kids = new Set(rel.get(p.id).children);
+    [...rel.get(p.id).spouses].forEach((s) => rel.get(s.id).children.forEach((c) => kids.add(c)));
+    [...kids].filter((c) => inBranch.has(c.id)).sort(byBirth).forEach(visit);
+  }
+  const minD = Math.min(...members.map((p) => depth.get(p.id)));
+  const roots = members.filter((p) => depth.get(p.id) === minD);
+  roots.filter((p) => rel.get(p.id).parents.size).sort(byBirth).forEach(visit);
+  roots.sort(byBirth).forEach(visit);
+  members.slice().sort((a, b) => depth.get(a.id) - depth.get(b.id) || byBirth(a, b)).forEach(visit);
+  const pos = new Map(order.map((p, i) => [p.id, i]));
+  return { minD, list: order.slice().sort((a, b) => depth.get(a.id) - depth.get(b.id) || pos.get(a.id) - pos.get(b.id)) };
+}
+
+function genLabel(r, isFounders, key) {
+  if (key === NO_BRANCH) return 'Generation ' + (r + 1);
+  if (isFounders) return r === 0 ? 'Founders' : 'Generation ' + (r + 1);
+  if (r === 0) return 'Branch head and spouse';
+  if (r === 1) return 'Children';
+  if (r === 2) return 'Grandchildren';
+  if (r === 3) return 'Great-grandchildren';
+  return (r - 2) + 'x great-grandchildren';
+}
+
+// ----- Rendering -----
+function personCard(p, showBranch) {
+  const loc = [p.city, p.state].filter(Boolean).join(', ');
+  const rel = (title, val) => val ? '<div><b>' + title + ':</b> ' + esc(split(val).join(', ')) + '</div>' : '';
+  const contact = canSeeContacts() ? [p.email, p.phone].filter(Boolean).map(esc).join(' · ') : '';
+  return '<div class="person">'
+    + '<div class="top"><div>'
+    + '<h3>' + esc(p.fullName)
+    + (p.status && p.status !== 'Living' ? '<span class="tag">' + esc(p.status === 'Unknown' ? 'Status unknown' : p.status) + '</span>' : '')
+    + (showBranch && p.branch ? '<span class="tag branch">' + esc(p.branch) + '</span>' : '')
+    + '</h3>'
+    + '<div class="sub">' + [p.otherNames ? 'aka ' + esc(p.otherNames) : '', p.birthYear ? 'Born ' + esc(p.birthYear) : '', esc(loc)].filter(Boolean).join(' · ') + '</div>'
+    + '</div><div style="white-space:nowrap">'
+    + '<button class="link" data-edit="' + esc(p.id) + '">Edit</button>'
+    + (role === 'admin' ? '<button class="danger" data-del="' + esc(p.id) + '">Delete</button>' : '')
+    + '</div></div>'
+    + '<div class="rels">' + rel('Parents', p.parents) + rel('Spouse', p.spouses) + rel('Children', p.children)
+    + (contact ? '<div><b>Contact:</b> ' + contact + '</div>' : '') + '</div>'
+    + (p.notes ? '<div class="sub" style="margin-top:6px">' + esc(p.notes) + '</div>' : '')
+    + '</div>';
+}
+
+function render() {
+  const groups = branchGroups();
+  const q = norm($('searchInput').value);
+  const content = $('content');
+  const sortedAll = people.slice().sort((a, b) => a.fullName.localeCompare(b.fullName));
+
+  $('peopleList').innerHTML = sortedAll.map((p) => '<option value="' + esc(label(p)) + '">').join('');
+  $('branchList').innerHTML = groups.filter((g) => g.key !== NO_BRANCH).map((g) => '<option value="' + esc(g.name) + '">').join('');
+
+  // Search: whole family, alphabetical
+  if (q) {
+    const hits = sortedAll.filter((p) => norm(Object.values(p).join(' ')).includes(q));
+    content.innerHTML = '<div class="count">' + hits.length + ' ' + (hits.length === 1 ? 'match' : 'matches') + ' in the whole family</div>'
+      + '<div class="list">' + (hits.length ? hits.map((p) => personCard(p, true)).join('') : '<div class="card" style="color:var(--muted)">No matches.</div>') + '</div>';
+    return;
+  }
+
+  const key = currentBranch();
+  const group = key && groups.find((g) => g.key === key);
+
+  // Home: branch cards
+  if (!group) {
+    content.innerHTML = '<div class="count">' + people.length + ' ' + (people.length === 1 ? 'person' : 'people')
+      + ' in the directory. Choose a branch to see that part of the family.</div>'
+      + (groups.length ? '<div class="branches">' + groups.map((g) => {
+        const parts = branchParts(g.name, g.key);
+        const deceased = g.members.filter((p) => p.status === 'Deceased').length;
+        return '<button class="branch-card' + (g.key === NO_BRANCH ? ' muted' : '') + '" data-branch="' + esc(g.key) + '">'
+          + '<span class="num">' + esc(parts.num) + '</span>'
+          + '<span class="name">' + esc(parts.title) + '</span>'
+          + '<span class="meta">' + g.members.length + ' ' + (g.members.length === 1 ? 'person' : 'people')
+          + (deceased ? ' · ' + deceased + ' deceased' : '') + '</span></button>';
+      }).join('') + '</div>'
+      : '<div class="card" style="color:var(--muted)">No one added yet. Click "+ Add person" to start.</div>');
+    return;
+  }
+
+  // Branch view: by generation
+  const rel = buildRelations();
+  const depth = computeDepths(rel);
+  const { minD, list } = orderBranch(group.members, rel, depth);
+  const parts = branchParts(group.name, group.key);
+  const isFounders = /^\s*0\s*[-–]/.test(group.name);
+  let html = '<button class="link back" id="backBtn">← All branches</button>'
+    + '<h2 class="branch-title">' + esc(parts.title) + '</h2>'
+    + '<div class="count">' + esc(parts.num) + ' · ' + group.members.length + ' ' + (group.members.length === 1 ? 'person' : 'people') + '</div>';
+  let lastGen = null;
+  const multiGen = new Set(list.map((p) => depth.get(p.id))).size > 1;
+  html += '<div>';
+  list.forEach((p) => {
+    const r = depth.get(p.id) - minD;
+    if (multiGen && r !== lastGen) {
+      if (lastGen !== null) html += '</div>';
+      html += '<div class="gen-title">' + esc(genLabel(r, isFounders, group.key)) + '</div><div class="list">';
+      lastGen = r;
+    } else if (!multiGen && lastGen === null) { html += '<div class="list">'; lastGen = r; }
+    html += personCard(p, false);
+  });
+  html += '</div></div>';
+  content.innerHTML = html;
 }
 
 // ----- Chip inputs (parents, spouses, children) -----
@@ -384,9 +535,10 @@ function openForm(p) {
   editingId = p ? p.id : null;
   $('formTitle').textContent = p ? 'Edit ' + p.fullName : 'Add a person';
   FIELDS.forEach((f) => { $('f_' + f).value = p ? (p[f] || '') : (f === 'status' ? 'Living' : ''); });
-  if (!p && $('branchFilter').value && $('branchFilter').value !== NO_BRANCH) {
-    const opt = $('branchFilter').selectedOptions[0];
-    $('f_branch').value = opt ? opt.textContent.replace(/\s\(\d+\)$/, '') : '';
+  if (!p) {
+    const key = currentBranch();
+    const g = key && key !== NO_BRANCH && branchGroups().find((x) => x.key === key);
+    if (g) $('f_branch').value = g.name;
   }
   LISTS.forEach((k) => {
     chipData[k] = p ? split(p[k]) : [];
@@ -403,8 +555,8 @@ function openForm(p) {
 function closeForm() { $('overlay').classList.add('hidden'); }
 
 function checkDup() {
-  const name = $('f_fullName').value.trim().toLowerCase();
-  const match = name && people.filter((p) => p.id !== editingId && p.fullName.trim().toLowerCase() === name);
+  const name = norm($('f_fullName').value);
+  const match = name && people.filter((p) => p.id !== editingId && norm(p.fullName) === name);
   const warn = $('dupWarn');
   if (match && match.length) {
     warn.textContent = 'Someone with this name is already in the directory: ' + match.map(label).join(', ') + '. Make sure this is a different person.';
@@ -475,16 +627,20 @@ $('addBtn').addEventListener('click', () => openForm(null));
 $('refreshBtn').addEventListener('click', refresh);
 $('exportBtn').addEventListener('click', exportCsv);
 $('searchInput').addEventListener('input', render);
-$('branchFilter').addEventListener('change', render);
 $('cancelBtn').addEventListener('click', closeForm);
 $('saveBtn').addEventListener('click', save);
 $('f_fullName').addEventListener('input', checkDup);
-$('list').addEventListener('click', (e) => {
+$('content').addEventListener('click', (e) => {
+  const card = e.target.closest('[data-branch]');
+  if (card) { openBranch(card.getAttribute('data-branch')); return; }
+  if (e.target.id === 'backBtn') { goHome(); return; }
   const edit = e.target.getAttribute('data-edit');
   const del = e.target.getAttribute('data-del');
   if (edit) openForm(people.find((p) => p.id === edit));
   if (del) removePerson(del);
 });
+window.addEventListener('hashchange', () => { if (!$('appView').classList.contains('hidden')) { render(); window.scrollTo(0, 0); } });
+window.addEventListener('popstate', () => { if (!$('appView').classList.contains('hidden')) render(); });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('overlay').classList.contains('hidden')) closeForm(); });
 
 $('nameInput').value = store.get('fd_name');

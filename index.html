@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Family Directory</title>
+<style>
+  :root {
+    --bg: #f6f4ef; --card: #ffffff; --text: #22211f; --muted: #6b6760; --line: #e2ddd3;
+    --accent: #2f5d50; --accent-soft: #e3ece8; --danger: #a23b2a; --chip: #eef0ec;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  header { background: var(--accent); color: #fff; padding: 18px 16px; }
+  header .inner { max-width: 1000px; margin: 0 auto; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+  header h1 { margin: 0; font-size: 22px; font-weight: 600; }
+  header p { margin: 2px 0 0; opacity: .85; font-size: 14px; }
+  #whoLine { font-size: 13px; opacity: .9; }
+  main { max-width: 1000px; margin: 0 auto; padding: 16px; }
+  .hidden { display: none !important; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  label { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+  input, select, textarea { width: 100%; padding: 9px 10px; border: 1px solid var(--line); border-radius: 7px;
+    font: inherit; background: #fff; color: var(--text); }
+  textarea { min-height: 60px; resize: vertical; }
+  button { font: inherit; border: 0; border-radius: 7px; padding: 9px 14px; cursor: pointer;
+    background: var(--accent); color: #fff; }
+  button.secondary { background: var(--accent-soft); color: var(--accent); }
+  button.danger { background: transparent; color: var(--danger); padding: 6px 8px; }
+  button.link { background: transparent; color: var(--accent); padding: 6px 8px; }
+  button:disabled { opacity: .6; cursor: default; }
+  .lock { max-width: 380px; margin: 40px auto; }
+  .lock .field { margin-bottom: 12px; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+  .toolbar #searchInput { flex: 1 1 220px; }
+  .toolbar #branchFilter { flex: 0 1 240px; }
+  .count { color: var(--muted); font-size: 14px; margin-bottom: 8px; }
+  .status { padding: 8px 12px; border-radius: 7px; margin-bottom: 12px; font-size: 14px; }
+  .status.info { background: var(--accent-soft); color: var(--accent); }
+  .status.error { background: #f6e1dc; color: var(--danger); }
+  .list { display: grid; gap: 10px; }
+  .person { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .person .top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; }
+  .person h3 { margin: 0; font-size: 17px; }
+  .person .sub { color: var(--muted); font-size: 13px; }
+  .person .rels { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 4px 16px;
+    margin-top: 8px; font-size: 14px; }
+  .person .rels b { color: var(--muted); font-weight: 600; }
+  .tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; margin-left: 6px;
+    background: var(--chip); color: var(--muted); vertical-align: middle; font-weight: 500; }
+  .tag.branch { background: var(--accent-soft); color: var(--accent); }
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: flex-start;
+    justify-content: center; overflow-y: auto; padding: 24px 12px; z-index: 10; }
+  .modal { background: var(--card); border-radius: 12px; width: 100%; max-width: 720px; padding: 20px; }
+  .modal h2 { margin: 0 0 14px; font-size: 20px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .full { grid-column: 1 / -1; }
+  .section-title { grid-column: 1 / -1; margin: 8px 0 -4px; font-size: 14px; font-weight: 700;
+    color: var(--accent); border-top: 1px solid var(--line); padding-top: 12px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+  .chip { background: var(--chip); border-radius: 99px; padding: 3px 4px 3px 10px; font-size: 14px;
+    display: inline-flex; align-items: center; gap: 2px; }
+  .chip button { background: transparent; color: var(--muted); padding: 0 6px; font-size: 16px; line-height: 1; }
+  .chip-row { display: flex; gap: 6px; }
+  .chip-row input { flex: 1; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+  @media (max-width: 600px) {
+    .grid { grid-template-columns: 1fr; }
+    .modal { padding: 16px; }
+    .toolbar #branchFilter { flex: 1 1 100%; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="inner">
+    <div>
+      <h1>Family Directory</h1>
+      <p>Add each person with their parents, children, and spouse. We'll build the tree from this.</p>
+    </div>
+    <div id="whoLine"></div>
+  </div>
+</header>
+
+<main>
+  <!-- Sign-in -->
+  <section id="lockView" class="card lock">
+    <div class="field">
+      <label for="nameInput">Your name</label>
+      <input id="nameInput" autocomplete="name" placeholder="So we know who added each entry">
+    </div>
+    <div class="field">
+      <label for="passInput">Passcode</label>
+      <input id="passInput" type="password" autocomplete="current-password">
+    </div>
+    <div id="lockMsg" class="status error hidden"></div>
+    <button id="unlockBtn" style="width:100%">Open directory</button>
+  </section>
+
+  <!-- Directory -->
+  <section id="appView" class="hidden">
+    <div id="statusBar" class="status hidden"></div>
+    <div class="toolbar">
+      <input id="searchInput" type="search" placeholder="Search names, parents, children, cities...">
+      <select id="branchFilter" aria-label="Filter by branch"></select>
+      <button id="addBtn">+ Add person</button>
+      <button id="exportBtn" class="secondary">Download spreadsheet</button>
+      <button id="refreshBtn" class="secondary">Refresh</button>
+    </div>
+    <div id="countLine" class="count"></div>
+    <div id="list" class="list"></div>
+  </section>
+</main>
+
+<!-- Add / edit form -->
+<div id="overlay" class="overlay hidden">
+  <div class="modal">
+    <h2 id="formTitle">Add a person</h2>
+    <div class="grid">
+      <div class="full">
+        <label for="f_fullName">Full name *</label>
+        <input id="f_fullName" placeholder="First, middle, last (include Jr./Sr. if any)">
+        <div id="dupWarn" class="hint hidden" style="color:var(--danger)"></div>
+      </div>
+      <div>
+        <label for="f_otherNames">Nickname / other names</label>
+        <input id="f_otherNames" placeholder="e.g. &quot;Bunny&quot;, maiden name">
+      </div>
+      <div>
+        <label for="f_birthYear">Birth year (approximate is fine)</label>
+        <input id="f_birthYear" inputmode="numeric" placeholder="e.g. 1948 or about 1950">
+      </div>
+      <div>
+        <label for="f_status">Living or deceased</label>
+        <select id="f_status">
+          <option value="Living">Living</option>
+          <option value="Deceased">Deceased</option>
+          <option value="Unknown">Not sure</option>
+        </select>
+      </div>
+      <div>
+        <label for="f_branch">Branch</label>
+        <input id="f_branch" list="branchList" placeholder="e.g. Aunt Ruth's line">
+        <div class="hint">Pick an existing branch from the suggestions so they group together.</div>
+      </div>
+
+      <div class="section-title">Family</div>
+      <div class="full" data-chips="parents">
+        <label>Parents</label>
+        <div class="chips"></div>
+        <div class="chip-row"><input list="peopleList" placeholder="Type a name, then press Enter"><button type="button" class="secondary">Add</button></div>
+      </div>
+      <div class="full" data-chips="spouses">
+        <label>Spouse / partner (include former, if they have children together)</label>
+        <div class="chips"></div>
+        <div class="chip-row"><input list="peopleList" placeholder="Type a name, then press Enter"><button type="button" class="secondary">Add</button></div>
+      </div>
+      <div class="full" data-chips="children">
+        <label>Children</label>
+        <div class="chips"></div>
+        <div class="chip-row"><input list="peopleList" placeholder="Type a name, then press Enter"><button type="button" class="secondary">Add</button></div>
+        <div class="hint">Suggestions appear as you type if the person is already in the directory. Pick one to avoid duplicates.</div>
+      </div>
+
+      <div class="section-title">Location and contact (optional)</div>
+      <div><label for="f_city">City</label><input id="f_city"></div>
+      <div><label for="f_state">State</label><input id="f_state"></div>
+      <div><label for="f_email">Email</label><input id="f_email" type="email"></div>
+      <div><label for="f_phone">Phone</label><input id="f_phone" type="tel"></div>
+      <div id="privateHint" class="full hint hidden">Email and phone are kept private. Only the reunion organizers can see them after you save. On an existing person, leave these blank to keep whatever is already on file.</div>
+      <div class="full"><label for="f_notes">Notes</label><textarea id="f_notes" placeholder="Anything that helps place this person in the family"></textarea></div>
+    </div>
+    <div id="formMsg" class="status error hidden" style="margin-top:12px"></div>
+    <div class="actions">
+      <button id="cancelBtn" class="secondary" type="button">Cancel</button>
+      <button id="saveBtn" type="button">Save</button>
+    </div>
+  </div>
+</div>
+
+<datalist id="peopleList"></datalist>
+<datalist id="branchList"></datalist>
+
+<script>
+// ===== PASTE YOUR GOOGLE APPS SCRIPT WEB APP URL BETWEEN THE QUOTES =====
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwFDh5cJdlU79zz2pO9UET_uGehzggcAfR_UY6cWa0nWXsKMf4v5sKmTU_FFuip3Tsb/exec';
+// ========================================================================
+
+const FIELDS = ['fullName', 'otherNames', 'birthYear', 'status', 'branch', 'city', 'state', 'email', 'phone', 'notes'];
+const LISTS = ['parents', 'spouses', 'children'];
+const NO_BRANCH = '__none__';
+let people = [];
+let passcode = '';
+let userName = '';
+let role = 'family';
+let editingId = null;
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const split = (s) => String(s || '').split(';').map((x) => x.trim()).filter(Boolean);
+const canSeeContacts = () => role === 'admin' || role === 'organizer';
+const store = {
+  get(k, session) { try { return (session ? sessionStorage : localStorage).getItem(k) || ''; } catch (e) { return ''; } },
+  set(k, v, session) { try { (session ? sessionStorage : localStorage).setItem(k, v); } catch (e) {} },
+  del(k, session) { try { (session ? sessionStorage : localStorage).removeItem(k); } catch (e) {} }
+};
+
+async function api(action, data = {}) {
+  const res = await fetch(SCRIPT_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify(Object.assign({ action, passcode }, data))
+  });
+  const json = await res.json();
+  if (!json.ok) {
+    const err = new Error(json.error || 'Something went wrong.');
+    err.auth = json.auth === false;
+    throw err;
+  }
+  return json;
+}
+
+async function loadPeople() {
+  const res = await api('list');
+  people = res.people;
+  role = res.role || 'family';
+  const roleName = { admin: 'admin', organizer: 'organizer', family: 'family member' }[role];
+  $('whoLine').textContent = 'Signed in as ' + userName + ' (' + roleName + ')';
+}
+
+function showStatus(text, type = 'info') {
+  const bar = $('statusBar');
+  if (!text) { bar.classList.add('hidden'); return; }
+  bar.textContent = text;
+  bar.className = 'status ' + type;
+}
+
+function label(p) { return p.fullName + (p.birthYear ? ' (' + p.birthYear + ')' : ''); }
+
+// ----- Sign in -----
+async function unlock() {
+  const msg = $('lockMsg');
+  msg.classList.add('hidden');
+  if (SCRIPT_URL.startsWith('PASTE')) {
+    msg.textContent = 'The app is not connected yet: the Google script URL has not been added to this page.';
+    msg.classList.remove('hidden');
+    return;
+  }
+  userName = $('nameInput').value.trim();
+  passcode = $('passInput').value;
+  if (!userName || !passcode) {
+    msg.textContent = 'Please enter your name and the passcode.';
+    msg.classList.remove('hidden');
+    return;
+  }
+  $('unlockBtn').disabled = true;
+  $('unlockBtn').textContent = 'Opening...';
+  try {
+    await loadPeople();
+    store.set('fd_name', userName);
+    store.set('fd_pass', passcode, true);
+    $('lockView').classList.add('hidden');
+    $('appView').classList.remove('hidden');
+    render();
+  } catch (e) {
+    msg.textContent = e.auth ? 'That passcode is not right.' : 'Could not connect: ' + e.message;
+    msg.classList.remove('hidden');
+  } finally {
+    $('unlockBtn').disabled = false;
+    $('unlockBtn').textContent = 'Open directory';
+  }
+}
+
+async function refresh() {
+  showStatus('Loading...');
+  try {
+    await loadPeople();
+    showStatus('');
+    render();
+  } catch (e) { handleError(e); }
+}
+
+function handleError(e) {
+  if (e.auth) { store.del('fd_pass', true); location.reload(); return; }
+  showStatus('Error: ' + e.message, 'error');
+}
+
+// ----- Branch filter -----
+function branchKey(b) { return String(b || '').trim().toLowerCase(); }
+
+function renderBranchFilter() {
+  const sel = $('branchFilter');
+  const current = sel.value;
+  const groups = {};
+  let none = 0;
+  people.forEach((p) => {
+    const k = branchKey(p.branch);
+    if (!k) { none++; return; }
+    if (!groups[k]) groups[k] = { name: p.branch.trim(), count: 0 };
+    groups[k].count++;
+  });
+  const list = Object.keys(groups).map((k) => ({ key: k, name: groups[k].name, count: groups[k].count }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  sel.innerHTML = '<option value="">All branches (' + people.length + ')</option>'
+    + list.map((g) => '<option value="' + esc(g.key) + '">' + esc(g.name) + ' (' + g.count + ')</option>').join('')
+    + (none ? '<option value="' + NO_BRANCH + '">No branch yet (' + none + ')</option>' : '');
+  sel.value = [...sel.options].some((o) => o.value === current) ? current : '';
+  $('branchList').innerHTML = list.map((g) => '<option value="' + esc(g.name) + '">').join('');
+}
+
+// ----- List -----
+function render() {
+  renderBranchFilter();
+  const q = $('searchInput').value.trim().toLowerCase();
+  const bf = $('branchFilter').value;
+  const sorted = people.slice().sort((a, b) => a.fullName.localeCompare(b.fullName));
+  const shown = sorted.filter((p) => {
+    if (bf === NO_BRANCH && branchKey(p.branch)) return false;
+    if (bf && bf !== NO_BRANCH && branchKey(p.branch) !== bf) return false;
+    return !q || Object.values(p).join(' ').toLowerCase().includes(q);
+  });
+
+  $('countLine').textContent = people.length + ' ' + (people.length === 1 ? 'person' : 'people') + ' in the directory'
+    + (q || bf ? ' · ' + shown.length + ' shown' : '');
+
+  const isAdmin = role === 'admin';
+  $('list').innerHTML = shown.length ? shown.map((p) => {
+    const loc = [p.city, p.state].filter(Boolean).join(', ');
+    const rel = (title, val) => val ? '<div><b>' + title + ':</b> ' + esc(split(val).join(', ')) + '</div>' : '';
+    const contact = canSeeContacts() ? [p.email, p.phone].filter(Boolean).map(esc).join(' · ') : '';
+    return '<div class="person">'
+      + '<div class="top"><div>'
+      + '<h3>' + esc(p.fullName)
+      + (p.status && p.status !== 'Living' ? '<span class="tag">' + esc(p.status === 'Unknown' ? 'Status unknown' : p.status) + '</span>' : '')
+      + (p.branch ? '<span class="tag branch">' + esc(p.branch) + '</span>' : '')
+      + '</h3>'
+      + '<div class="sub">' + [p.otherNames ? 'aka ' + esc(p.otherNames) : '', p.birthYear ? 'Born ' + esc(p.birthYear) : '', esc(loc)].filter(Boolean).join(' · ') + '</div>'
+      + '</div><div style="white-space:nowrap">'
+      + '<button class="link" data-edit="' + esc(p.id) + '">Edit</button>'
+      + (isAdmin ? '<button class="danger" data-del="' + esc(p.id) + '">Delete</button>' : '')
+      + '</div></div>'
+      + '<div class="rels">' + rel('Parents', p.parents) + rel('Spouse', p.spouses) + rel('Children', p.children)
+      + (contact ? '<div><b>Contact:</b> ' + contact + '</div>' : '') + '</div>'
+      + (p.notes ? '<div class="sub" style="margin-top:6px">' + esc(p.notes) + '</div>' : '')
+      + '</div>';
+  }).join('') : '<div class="card" style="color:var(--muted)">' + (q || bf ? 'No matches.' : 'No one added yet. Click "+ Add person" to start.') + '</div>';
+
+  $('peopleList').innerHTML = sorted.map((p) => '<option value="' + esc(label(p)) + '">').join('');
+}
+
+// ----- Chip inputs (parents, spouses, children) -----
+const chipData = { parents: [], spouses: [], children: [] };
+
+function drawChips(key) {
+  const box = document.querySelector('[data-chips="' + key + '"] .chips');
+  box.innerHTML = chipData[key].map((n, i) =>
+    '<span class="chip">' + esc(n) + '<button type="button" data-rm="' + key + ':' + i + '" aria-label="Remove">×</button></span>').join('');
+}
+
+function addChip(key) {
+  const input = document.querySelector('[data-chips="' + key + '"] input');
+  const val = input.value.trim().replace(/;/g, ',');
+  if (val && !chipData[key].some((x) => x.toLowerCase() === val.toLowerCase())) chipData[key].push(val);
+  input.value = '';
+  drawChips(key);
+  input.focus();
+}
+
+LISTS.forEach((key) => {
+  const wrap = document.querySelector('[data-chips="' + key + '"]');
+  wrap.querySelector('.chip-row button').addEventListener('click', () => addChip(key));
+  wrap.querySelector('input').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addChip(key); } });
+});
+
+document.addEventListener('click', (e) => {
+  const rm = e.target.getAttribute('data-rm');
+  if (rm) { const [k, i] = rm.split(':'); chipData[k].splice(+i, 1); drawChips(k); }
+});
+
+// ----- Form -----
+function openForm(p) {
+  editingId = p ? p.id : null;
+  $('formTitle').textContent = p ? 'Edit ' + p.fullName : 'Add a person';
+  FIELDS.forEach((f) => { $('f_' + f).value = p ? (p[f] || '') : (f === 'status' ? 'Living' : ''); });
+  if (!p && $('branchFilter').value && $('branchFilter').value !== NO_BRANCH) {
+    const opt = $('branchFilter').selectedOptions[0];
+    $('f_branch').value = opt ? opt.textContent.replace(/\s\(\d+\)$/, '') : '';
+  }
+  LISTS.forEach((k) => {
+    chipData[k] = p ? split(p[k]) : [];
+    document.querySelector('[data-chips="' + k + '"] input').value = '';
+    drawChips(k);
+  });
+  $('privateHint').classList.toggle('hidden', canSeeContacts());
+  $('formMsg').classList.add('hidden');
+  $('dupWarn').classList.add('hidden');
+  $('overlay').classList.remove('hidden');
+  $('f_fullName').focus();
+}
+
+function closeForm() { $('overlay').classList.add('hidden'); }
+
+function checkDup() {
+  const name = $('f_fullName').value.trim().toLowerCase();
+  const match = name && people.filter((p) => p.id !== editingId && p.fullName.trim().toLowerCase() === name);
+  const warn = $('dupWarn');
+  if (match && match.length) {
+    warn.textContent = 'Someone with this name is already in the directory: ' + match.map(label).join(', ') + '. Make sure this is a different person.';
+    warn.classList.remove('hidden');
+  } else warn.classList.add('hidden');
+}
+
+async function save() {
+  LISTS.forEach((k) => { if (document.querySelector('[data-chips="' + k + '"] input').value.trim()) addChip(k); });
+  const person = { id: editingId || '', addedBy: userName };
+  FIELDS.forEach((f) => { person[f] = $('f_' + f).value.trim(); });
+  LISTS.forEach((k) => { person[k] = chipData[k].join('; '); });
+  const msg = $('formMsg');
+  if (!person.fullName) { msg.textContent = 'Please enter a name.'; msg.classList.remove('hidden'); return; }
+
+  $('saveBtn').disabled = true;
+  $('saveBtn').textContent = 'Saving...';
+  try {
+    await api('save', { person });
+    closeForm();
+    showStatus('Saved ' + person.fullName + '.');
+    await loadPeople();
+    render();
+  } catch (e) {
+    if (e.auth) return handleError(e);
+    msg.textContent = 'Could not save: ' + e.message;
+    msg.classList.remove('hidden');
+  } finally {
+    $('saveBtn').disabled = false;
+    $('saveBtn').textContent = 'Save';
+  }
+}
+
+async function removePerson(id) {
+  const p = people.find((x) => x.id === id);
+  if (!p || !confirm('Delete ' + p.fullName + ' from the directory? This cannot be undone.')) return;
+  showStatus('Deleting...');
+  try {
+    await api('delete', { id });
+    people = people.filter((x) => x.id !== id);
+    showStatus('Deleted ' + p.fullName + '.');
+    render();
+  } catch (e) { handleError(e); }
+}
+
+// ----- Export -----
+function exportCsv() {
+  const cols = [['fullName', 'Full name'], ['otherNames', 'Other names'], ['birthYear', 'Birth year'], ['status', 'Status'],
+    ['branch', 'Branch'], ['parents', 'Parents'], ['spouses', 'Spouses'], ['children', 'Children'], ['city', 'City'], ['state', 'State']]
+    .concat(canSeeContacts() ? [['email', 'Email'], ['phone', 'Phone']] : [])
+    .concat([['notes', 'Notes'], ['addedBy', 'Added by'], ['updatedAt', 'Last updated'], ['id', 'ID']]);
+  const cell = (v) => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+  const rows = [cols.map((c) => cell(c[1])).join(',')]
+    .concat(people.map((p) => cols.map((c) => cell(p[c[0]])).join(',')));
+  const blob = new Blob(['﻿' + rows.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'family-directory-' + new Date().toISOString().slice(0, 10) + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+// ----- Wire up -----
+$('unlockBtn').addEventListener('click', unlock);
+$('passInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') unlock(); });
+$('addBtn').addEventListener('click', () => openForm(null));
+$('refreshBtn').addEventListener('click', refresh);
+$('exportBtn').addEventListener('click', exportCsv);
+$('searchInput').addEventListener('input', render);
+$('branchFilter').addEventListener('change', render);
+$('cancelBtn').addEventListener('click', closeForm);
+$('saveBtn').addEventListener('click', save);
+$('f_fullName').addEventListener('input', checkDup);
+$('list').addEventListener('click', (e) => {
+  const edit = e.target.getAttribute('data-edit');
+  const del = e.target.getAttribute('data-del');
+  if (edit) openForm(people.find((p) => p.id === edit));
+  if (del) removePerson(del);
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('overlay').classList.contains('hidden')) closeForm(); });
+
+$('nameInput').value = store.get('fd_name');
+const savedPass = store.get('fd_pass', true);
+if (savedPass && store.get('fd_name')) { $('passInput').value = savedPass; unlock(); }
+</script>
+</body>
+</html>

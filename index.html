@@ -472,9 +472,16 @@ function branchDescription(group, rel, depth, short) {
   const minD = Math.min(...members.map((p) => depth.get(p.id)));
   const top = members.filter((p) => depth.get(p.id) === minD).sort(byBirth);
   if (/^\s*0\s*[-–]/.test(group.name)) {
+    // The founders are the couple whose children head the other branches.
+    const inGroup = new Set(members.map((p) => p.id));
+    const founders = members.filter((p) => [...rel.get(p.id).children].some((c) => !inGroup.has(c.id))).sort(byBirth);
     const kids = new Set();
-    top.forEach((p) => rel.get(p.id).children.forEach((c) => kids.add(c.id)));
-    return kids.size ? 'Parents of the ' + kids.size + ' branch heads' + (short ? '' : ', the children who started each family branch') + '.' : 'The founders of the family.';
+    founders.forEach((p) => rel.get(p.id).children.forEach((c) => { if (!inGroup.has(c.id)) kids.add(c.id); }));
+    if (!founders.length) return 'The founders of the family.';
+    const nameOf = (p) => short ? shortName(p) : p.fullName;
+    const older = members.length > founders.length;
+    return founders.map(nameOf).join(' & ') + ', parents of the ' + kids.size + ' branch heads'
+      + (older ? (short ? ', and their parents.' : ', along with their own parents.') : '.');
   }
   const head = top.find((p) => rel.get(p.id).parents.size) || top[0];
   if (!head) return '';
@@ -484,9 +491,12 @@ function branchDescription(group, rel, depth, short) {
     + (parents.length ? ', child of ' + parents.map(nameOf).join(' & ') : '') + '.';
 }
 
-function genLabel(r, isFounders, key) {
+function genLabel(r, isFounders, key, maxR) {
   if (key === NO_BRANCH) return 'Generation ' + (r + 1);
-  if (isFounders) return r === 0 ? 'Founders' : 'Generation ' + (r + 1);
+  if (isFounders) {
+    const up = maxR - r;
+    return up === 0 ? 'Founders' : up === 1 ? "Founders' parents" : "Founders' grandparents and earlier";
+  }
   if (r === 0) return 'Branch head and spouse';
   if (r === 1) return 'Children';
   if (r === 2) return 'Grandchildren';
@@ -569,12 +579,13 @@ function render() {
     + '<div class="count">' + esc(parts.num) + ' · ' + group.members.length + ' ' + (group.members.length === 1 ? 'person' : 'people') + '</div>';
   let lastGen = null;
   const multiGen = new Set(list.map((p) => depth.get(p.id))).size > 1;
+  const maxR = Math.max(...list.map((p) => depth.get(p.id) - minD));
   html += '<div>';
   list.forEach((p) => {
     const r = depth.get(p.id) - minD;
     if (multiGen && r !== lastGen) {
       if (lastGen !== null) html += '</div>';
-      html += '<div class="gen-title">' + esc(genLabel(r, isFounders, group.key)) + '</div><div class="list">';
+      html += '<div class="gen-title">' + esc(genLabel(r, isFounders, group.key, maxR)) + '</div><div class="list">';
       lastGen = r;
     } else if (!multiGen && lastGen === null) { html += '<div class="list">'; lastGen = r; }
     html += personCard(p, false, find);
